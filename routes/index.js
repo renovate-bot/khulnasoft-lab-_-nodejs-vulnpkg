@@ -1,9 +1,18 @@
 var utils    = require('../utils');
 var mongoose = require('mongoose');
 var Todo     = mongoose.model('Todo');
-// TODO: 
+var User     = mongoose.model('User');
+// TODO:
 var hms = require('humanize-ms');
 var ms = require('ms');
+var streamBuffers = require('stream-buffers');
+var readline = require('readline');
+var moment = require('moment');
+var exec = require('child_process').exec;
+
+// zip-slip
+var fileType = require('file-type');
+var AdmZip = require('adm-zip');
 
 exports.index = function (req, res, next) {
   Todo.
@@ -13,19 +22,39 @@ exports.index = function (req, res, next) {
       if (err) return next(err);
 
       res.render('index', {
-          title : 'TODO',
-          todos : todos
+        title: 'Vulnpkg TODO',
+        subhead: 'Vulnerabilities at their best',
+        todos: todos,
       });
     });
 };
 
-exports.create = function (req, res, next) {
-  // console.log('req.body: ' + JSON.stringify(req.body));
+
+exports.admin = function (req, res, next) {
+  console.log(req.body);
+  User.find({ username: req.body.username, password: req.body.password }, function (err, users) {
+    if (users.length > 0) {
+      return res.render('admin', {
+        title: 'Admin Access Granted',
+        granted: true,
+      });
+    } else {
+      return res.render('admin', {
+        title: 'Admin Access',
+        granted: false,
+      });
+    }
+  });
+
+};
+
+function parse(todo) {
+  var t = todo;
 
   var remindToken = ' in ';
-  var reminder = req.body.content.toString().indexOf(remindToken);
+  var reminder = t.toString().indexOf(remindToken);
   if (reminder > 0) {
-    var time = req.body.content.slice(reminder + remindToken.length);
+    var time = t.slice(reminder + remindToken.length);
     time = time.replace(/\n$/, '');
 
     var period = hms(time);
@@ -33,16 +62,38 @@ exports.create = function (req, res, next) {
     console.log('period: ' + period);
 
     // remove it
-    req.body.content = req.body.content.slice(0, reminder);
+    t = t.slice(0, reminder);
     if (typeof period != 'undefined') {
-      req.body.content += ' [' + ms(period) + ']';
+      t += ' [' + ms(period) + ']';
     }
+  }
+  return t;
+}
+
+exports.create = function (req, res, next) {
+  // console.log('req.body: ' + JSON.stringify(req.body));
+
+  var item = req.body.content;
+  var imgRegex = /\!\[alt text\]\((http.*)\s\".*/;
+  if (typeof(item) == 'string' && item.match(imgRegex)) {
+    var url = item.match(imgRegex)[1];
+    console.log('found img: ' + url);
+
+    exec('identify ' + url, function (err, stdout, stderr) {
+      console.log(err);
+      if (err !== null) {
+        console.log('Error (' + err + '):' + stderr);
+      }
+    });
+
+  } else {
+    item = parse(item);
   }
 
   new Todo({
-      content    : req.body.content,
-      updated_at : Date.now()
-  }).save(function (err, todo, count) {
+      content: item,
+      updated_at: Date.now(),
+    }).save(function (err, todo, count) {
     if (err) return next(err);
 
     /*
@@ -61,12 +112,12 @@ exports.destroy = function (req, res, next) {
   Todo.findById(req.params.id, function (err, todo) {
 
     try {
-	todo.remove(function(err, todo) {
-      	  if (err) return next(err);
-     	   res.redirect('/');
-    	});
-    } catch(e) {
-    }
+      todo.remove(function (err, todo) {
+        if (err) return next(err);
+        res.redirect('/');
+  	});
+  } catch(e) {
+  }
   });
 };
 
@@ -102,4 +153,77 @@ exports.update = function(req, res, next) {
 exports.current_user = function (req, res, next) {
 
   next();
+};
+
+function isBlank(str) {
+  return (!str || /^\s*$/.test(str));
+}
+
+exports.import = function (req, res, next) {
+  if (!req.files) {
+    res.send('No files were uploaded.');
+    return;
+  }
+
+  var importFile = req.files.importFile;
+  var data;
+  var importedFileType = fileType(importFile.data);
+  var zipFileExt = { ext: "zip", mime: "application/zip" };
+  if (importedFileType === null) {
+    importedFileType = { ext: "txt", mime: "text/plain" };
+  }
+  if (importedFileType["mime"] === zipFileExt["mime"]) {
+    var zip = AdmZip(importFile.data);
+    var extracted_path = "/tmp/extracted_files";
+    zip.extractAllTo(extracted_path, true);
+    var zipEntries = zip.getEntries();
+    zipEntries.forEach(function (zipEntry) {
+      if (zipEntry.entryName === "backup.txt") {
+        data = zipEntry.getData().toString('ascii');
+      } else {
+        data = "No backup.txt file found";
+      }
+    });
+  } else {
+    data = importFile.data.toString('ascii');
+  }
+  var lines = data.split('\n');
+  lines.forEach(function (line) {
+    var parts = line.split(',');
+    var what = parts[0];
+    console.log('importing ' + what);
+    var when = parts[1];
+    var locale = parts[2];
+    var format = parts[3];
+    var item = what;
+    if (!isBlank(what)) {
+      if (!isBlank(when) && !isBlank(locale) && !isBlank(format)) {
+        console.log('setting locale ' + parts[1]);
+        moment.locale(locale);
+        var d = moment(when);
+        console.log('formatting ' + d);
+        item += ' [' + d.format(format) + ']';
+      }
+
+      new Todo({
+        content: item,
+        updated_at: Date.now(),
+      }).save(function (err, todo, count) {
+        if (err) return next(err);
+        console.log('added ' + todo);
+      });
+    }
+  });
+
+  res.redirect('/');
+};
+
+exports.about_new = function (req, res, next) {
+    console.log(JSON.stringify(req.query));
+    return res.render("about_new.dust",
+      {
+        title: 'Vulnpkg TODO',
+        subhead: 'Vulnerabilities at their best',
+        device: req.query.device
+      });
 };
