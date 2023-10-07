@@ -1,0 +1,27 @@
+version: "2"
+services:
+  vulnpkg:
+    build: .
+    container_name: vulnpkg
+    environment:
+      - DOCKER=1
+    ports:
+      - "3001:3001"
+      - "9229:9229"
+    links:
+      - vulnpkg-mongo
+    depends_on:
+      - vulnpkg-mongo
+  vulnpkg-mongo:
+    container_name: vulnpkg-mongo
+    image: mongo:3
+    ports:
+      - "27017:27017"
+  good-mysql:
+    container_name: vulnpkg-mysql
+    image: mysql:5
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: acme
+    ports:
+      - "3306:3306"
