@@ -40,7 +40,7 @@
     "st": "3.0.0",
     "stream-buffers": "^3.0.1",
     "tap": "^18.4.3",
-    "adm-zip": "0.4.11",
+    "adm-zip": "0.5.16",
     "file-type": "^8.1.0"
   },
   "devDependencies": {
